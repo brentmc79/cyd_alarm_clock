@@ -43,7 +43,7 @@ bool DisplayManager::begin() {
     _display->init();
 
     Serial.println("Display init complete, setting rotation...");
-    _display->setRotation(1);  // Landscape mode
+    _display->setRotation(0);  // Native orientation (landscape for this panel)
 
     Serial.println("Filling screen black...");
     _display->fillScreen(TFT_BLACK);
