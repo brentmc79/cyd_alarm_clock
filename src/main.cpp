@@ -3,15 +3,30 @@
 #include "TouchManager.h"
 #include "UI/Button.h"
 
+#ifdef ENABLE_WIFI
+#include "WiFiManager.h"
+#include "UI/WiFiSetupScreen.h"
+#endif
+
 // Global managers
 DisplayManager display;
 TouchManager touch;
+
+#ifdef ENABLE_WIFI
+WiFiManager wifiMgr;
+#endif
 
 // Test buttons
 Button* button1 = nullptr;
 Button* button2 = nullptr;
 Button* button3 = nullptr;
 Button* button4 = nullptr;
+
+#ifdef ENABLE_WIFI
+// WiFi setup screen
+WiFiSetupScreen* setupScreen = nullptr;
+bool showingSetupScreen = false;
+#endif
 
 // Touch statistics
 int touchCounter = 0;
@@ -137,7 +152,7 @@ void setup() {
   Serial.begin(115200);
   delay(1000);  // Give serial time to initialize
 
-  Serial.println("\n\n=== ESP32-S3 Alarm Clock - Phase 2 Test ===");
+  Serial.println("\n\n=== ESP32-S3 Alarm Clock - Phase 3: WiFi Configuration ===");
   Serial.printf("CPU Frequency: %d MHz\n", ESP.getCpuFreqMHz());
   Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
   Serial.printf("PSRAM Size: %d bytes\n", ESP.getPsramSize());
@@ -162,6 +177,81 @@ void setup() {
     return;
   }
   Serial.println("Touch initialized successfully!");
+
+#ifdef ENABLE_WIFI
+  // Initialize WiFi
+  Serial.println("\nInitializing WiFi...");
+  if (!wifiMgr.begin()) {
+    Serial.println("ERROR: WiFi initialization failed!");
+    // Continue anyway - will show setup screen
+  }
+
+  // Register WiFi state change callback
+  wifiMgr.onStateChange([](WiFiState state) {
+    Serial.printf("WiFi state changed to: %s\n", wifiMgr.getStateString());
+
+    switch (state) {
+      case WIFI_PROVISIONING:
+      case WIFI_FAILED:
+        // Show setup screen for provisioning or failure
+        showingSetupScreen = true;
+        if (!setupScreen) {
+          setupScreen = new WiFiSetupScreen();
+          setupScreen->showQRCode(true);
+
+          // Set button callbacks
+          setupScreen->setRetryCallback([]() {
+            Serial.println("Retry button pressed");
+            wifiMgr.reconnect();
+          });
+
+          setupScreen->setResetCallback([]() {
+            Serial.println("Reset button pressed");
+            wifiMgr.resetCredentials();
+          });
+        }
+
+        // Update status based on state
+        if (state == WIFI_PROVISIONING) {
+          setupScreen->setStatus("Waiting for app...");
+          setupScreen->setError("");
+        } else if (state == WIFI_FAILED) {
+          setupScreen->setError("Connection failed!");
+          setupScreen->setStatus("Tap Retry or Reset");
+        }
+
+        setupScreen->draw(&display);
+        break;
+
+      case WIFI_CONNECTING:
+        // If setup screen is showing, update status
+        if (showingSetupScreen && setupScreen) {
+          setupScreen->setError("");  // Clear error
+          setupScreen->setStatus("Connecting to WiFi...");
+          setupScreen->draw(&display);
+        } else {
+          // Connecting with saved credentials, show status on main screen
+          Serial.println("Connecting to WiFi with saved credentials...");
+          // Could add a status indicator to main UI here
+        }
+        break;
+
+      case WIFI_CONNECTED:
+        showingSetupScreen = false;
+        Serial.printf("WiFi connected! IP: %s\n", wifiMgr.getIP().toString().c_str());
+        Serial.printf("SSID: %s\n", wifiMgr.getSSID().c_str());
+        Serial.printf("RSSI: %d dBm\n", wifiMgr.getRSSI());
+        // Redraw main UI
+        drawUI();
+        break;
+
+      default:
+        break;
+    }
+  });
+#else
+  Serial.println("\nWiFi disabled (ENABLE_WIFI not defined) - testing PSRAM allocation...");
+#endif
 
   // Create test buttons (left side, 2x2 grid)
   // Button dimensions: 140x60 pixels with large touch targets
@@ -189,12 +279,31 @@ void setup() {
 }
 
 void loop() {
+#ifdef ENABLE_WIFI
+  // Update WiFi state machine
+  wifiMgr.update();
+#endif
+
   // Update touch state
   touch.update();
 
-  // Handle touch events - always pass to buttons (even on release)
-  TouchPoint tp = touch.getTouch(0);  // Primary touch point
+  // Get primary touch point
+  TouchPoint tp = touch.getTouch(0);
 
+#ifdef ENABLE_WIFI
+  // If showing setup screen, route all touch there
+  if (showingSetupScreen && setupScreen) {
+    if (touch.isTouched() || touch.wasReleased()) {
+      setupScreen->onTouch(tp);
+      // Redraw setup screen after touch events to update button states
+      setupScreen->draw(&display);
+    }
+    delay(10);
+    return;  // Don't process other UI
+  }
+#endif
+
+  // Handle touch events - always pass to buttons (even on release)
   // Pass touch to buttons
   if (button1) button1->onTouch(tp);
   if (button2) button2->onTouch(tp);
