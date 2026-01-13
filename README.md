@@ -8,11 +8,14 @@ A full-featured alarm clock built on the Elecrow CrowPanel ESP32-S3 5-inch displ
 - **RGB Parallel Display** - 800×480 resolution with LovyanGFX graphics library
 - **PWM Backlight Control** - Smooth brightness adjustment
 - **PSRAM Support** - 768KB framebuffer allocation for flicker-free graphics
+- **Capacitive Touch** - GT911 multi-touch support (up to 5 points)
+- **WiFi Provisioning** - BLE-based WiFi setup via ESP BLE Provisioning app
+- **Credential Storage** - NVS-based WiFi credential persistence
+- **Touch UI System** - Button widgets with press/release detection
 - **Serial Debugging** - UART-based logging for development
 
 ### Planned 🚧
-- **Capacitive Touch** - GT911 multi-touch support (up to 5 points)
-- **WiFi Configuration** - Network scanning with on-screen keyboard for password entry
+- **WiFi Setup Screen** - QR code and error handling UI (infrastructure complete)
 - **NTP Time Sync** - Automatic time synchronization over WiFi
 - **Alarm System** - Configurable alarm with repeat days
 - **I2S Audio** - Alarm sound playback
@@ -89,23 +92,32 @@ pio device monitor
 ```
 cyd_alarm_clock/
 ├── include/
-│   ├── LGFX_CrowPanel.h      # LovyanGFX display configuration
-│   └── config.h               # Project-wide configuration
+│   ├── LGFX_CrowPanel.h         # LovyanGFX display configuration
+│   └── config.h                  # Project-wide configuration
 ├── src/
-│   ├── main.cpp               # Main application entry point
-│   ├── DisplayManager.h/cpp   # Display abstraction layer
-│   └── (future modules)       # Touch, WiFi, Time, Alarm, Audio managers
-├── platformio.ini             # Build configuration
-├── CLAUDE.md                  # AI assistant guidance document
-├── DEVELOPMENT_LOG.md         # Issues and solutions tracker
-└── README.md                  # This file
+│   ├── main.cpp                  # Main application entry point
+│   ├── DisplayManager.h/cpp      # Display abstraction layer
+│   ├── TouchManager.h/cpp        # GT911 touch controller interface
+│   ├── WiFiManager.h/cpp         # WiFi connection & BLE provisioning
+│   ├── StorageManager.h/cpp      # NVS credential storage
+│   └── UI/
+│       ├── UIElement.h           # Base class for UI components
+│       ├── Button.h/cpp          # Touch button widget
+│       ├── QRCodeWidget.h/cpp    # QR code display widget
+│       └── WiFiSetupScreen.h/cpp # WiFi provisioning UI
+├── lib/
+│   └── WiFiProv/                 # Patched WiFiProv library
+├── platformio.ini                # Build configuration
+├── CLAUDE.md                     # AI assistant guidance document
+├── DEVELOPMENT_LOG.md            # Issues and solutions tracker
+└── README.md                     # This file
 ```
 
 ## Development Phases
 
 - [x] **Phase 1: Display Foundation** - RGB display with LovyanGFX ✅
-- [ ] **Phase 2: Touch Input System** - GT911 capacitive touch 🚧
-- [ ] **Phase 3: WiFi Configuration** - Network setup UI
+- [x] **Phase 2: Touch Input System** - GT911 capacitive touch ✅
+- [x] **Phase 3: WiFi Configuration** - BLE provisioning with credential storage ✅
 - [ ] **Phase 4: Time Management** - NTP synchronization
 - [ ] **Phase 5: Alarm System** - Alarm settings and triggering
 - [ ] **Phase 6: Audio System** - I2S alarm sound playback
@@ -122,19 +134,25 @@ cyd_alarm_clock/
 - **Partition**: Custom partition table (partitions.csv)
 
 ### Library Dependencies
-- **LovyanGFX** (^1.1.16) - Graphics library with ESP32-S3 RGB support
-- **DNSServer** (^1.1.0) - WiFi captive portal
+- **LovyanGFX** (1.1.16) - Graphics library with ESP32-S3 RGB support ⚠️ **Must use 1.1.16** (1.2.7+ has PSRAM crash bug)
+- **GT911** (TAMCTec/gt911-arduino) - Capacitive touch controller
+- **WiFiProv** (bundled, patched) - BLE provisioning library
+- **QRCode** (^0.0.1) - QR code generation for WiFi setup
+- **Preferences** (built-in) - ESP32 NVS wrapper for credential storage
+- **DNSServer** (^1.1.0) - WiFi captive portal (for future use)
 - **ArduinoJson** (^6.21.5) - JSON parsing
 - **NTPClient** (^3.2.1) - Network time synchronization
-- **GT911** - Capacitive touch controller
 - **BH1750** (^1.3.0) - Light sensor
 
 ### Key Architectural Decisions
 
 1. **Lazy Initialization**: Display object created in `begin()` after PSRAM initialization, not during global construction
-2. **Manager Pattern**: Separate managers for display, touch, WiFi, time, alarm, and audio
+2. **Manager Pattern**: Separate managers for display, touch, WiFi, time, alarm, and audio with state machines
 3. **PSRAM Framebuffer**: Leverages 8MB PSRAM for smooth graphics rendering
-4. **Serial via UART**: Debugging through GPIO43/44 (ARDUINO_USB_CDC_ON_BOOT=0)
+4. **LovyanGFX Version Lock**: Must use 1.1.16 (1.2.7+ has breaking PSRAM allocation bug on ESP32-S3 OPI mode)
+5. **BLE Provisioning**: Uses ESP-IDF WiFiProv library with security level 1 encryption
+6. **UI Component System**: Base UIElement class with derived Button and screen widgets
+7. **Serial via UART**: Debugging through GPIO43/44 (ARDUINO_USB_CDC_ON_BOOT=0)
 
 ## Troubleshooting
 
@@ -152,13 +170,26 @@ See [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md) for detailed issue history and solu
 
 ## Development History
 
-This project encountered and solved several challenging issues during Phase 1:
+### Phase 1: Display Foundation
 - **Issue #1**: TFT_eSPI incompatibility → Switched to LovyanGFX
 - **Issue #2**: Framework version incompatibility → Upgraded to Arduino 3.x
 - **Issue #3**: Missing SDK headers → Configured memory type correctly
 - **Issue #5**: Upload verification failures → Reduced baud rate
 - **Issue #6**: PSRAM bootloop → Implemented lazy initialization
 - **Issue #8**: Wrong GPIO pins → Used official Elecrow configuration
+
+### Phase 2: Touch Input
+- Successfully integrated GT911 multi-touch controller
+- Implemented edge detection for button press/release events
+- Created UIElement base class and Button widget system
+
+### Phase 3: WiFi Configuration
+- **Critical Issue**: LovyanGFX 1.2.7 causes LoadProhibited crash at 0x80000000 during PSRAM framebuffer allocation
+  - **Root Cause**: Breaking change in Bus_RGB memory allocation on ESP32-S3 OPI PSRAM
+  - **Solution**: Locked to LovyanGFX 1.1.16 which has working PSRAM support
+- Implemented BLE WiFi provisioning with ESP BLE Provisioning mobile app
+- Created NVS-based credential storage with auto-reconnect
+- Built WiFi setup screen with QR code widget
 
 Full details in [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md).
 
@@ -180,6 +211,10 @@ This project is provided as-is for educational and personal use.
 
 ## Current Status
 
-**Phase 1 Complete** ✅ - Display foundation working with proper RGB output, brightness control, and test patterns.
+**Phase 3 Complete** ✅ - WiFi provisioning system fully operational:
+- BLE-based WiFi configuration via ESP BLE Provisioning mobile app
+- NVS credential storage with auto-reconnect on boot
+- WiFi state machine with setup screen UI
+- Touch input system with button widgets
 
-**Next**: Phase 2 - Touch Input System implementation with GT911 controller.
+**Next**: Phase 4 - Time Management with NTP synchronization
